@@ -10,6 +10,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
+import androidx.compose.animation.Animatable
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.VectorConverter
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -18,6 +23,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animatePanBy
 import androidx.compose.foundation.gestures.animateZoomBy
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -292,18 +298,33 @@ private fun DisplayPictureDialog(
     onDownloadPicture: () -> Unit,
     onDismissRequest: () -> Unit
 ) {
-    var offset by remember { mutableStateOf(Offset.Zero) }
-    var scale by remember { mutableFloatStateOf(1f) }
+    val coroutineScope = rememberCoroutineScope()
+    val offset = remember {
+        Animatable(
+            Offset.Zero,
+            Offset.VectorConverter
+        )
+    }
+    val scale = remember { Animatable(1f) }
     var size by remember { mutableStateOf(IntSize.Zero) }
     val transformableState = rememberTransformableState { zoomChange, panChange, _ ->
-        scale *= zoomChange
-
-        if (abs(offset.x + panChange.x * scale) <= (displayPicture.width * scale - displayPicture.width) / 2) {
-            offset += Offset(panChange.x * scale, 0f)
+        if (scale.targetValue * zoomChange < 4f) {
+            coroutineScope.launch {
+                scale.animateTo(scale.targetValue * zoomChange)
+            }
         }
 
-        if (abs(offset.y + panChange.y * scale) <= (displayPicture.height * scale - size.height) / 2) {
-            offset += Offset(0f, panChange.y * scale)
+        if (abs(offset.targetValue.x + panChange.x * scale.targetValue) <= (displayPicture.width * scale.targetValue - displayPicture.width) / 2) {
+            coroutineScope.launch {
+                offset.snapTo(offset.targetValue + Offset(panChange.x * scale.targetValue, 0f))
+            }
+        }
+
+
+        if (abs(offset.targetValue.y + panChange.y * scale.targetValue) <= (displayPicture.height * scale.targetValue - size.height) / 2) {
+            coroutineScope.launch {
+                offset.snapTo(offset.targetValue + Offset(0f, panChange.y * scale.targetValue))
+            }
         }
     }
 
@@ -334,9 +355,9 @@ private fun DisplayPictureDialog(
                         .fillMaxSize()
                         .align(Alignment.Center)
                         .offset {
-                            IntOffset(offset.x.roundToInt(), offset.y.roundToInt())
+                            IntOffset(offset.value.x.roundToInt(), offset.value.y.roundToInt())
                         }
-                        .scale(scale)
+                        .scale(scale.value)
                         .transformable(
                             state = transformableState,
                             lockRotationOnZoomPan = false
@@ -349,29 +370,58 @@ private fun DisplayPictureDialog(
                                 while (true) {
                                     val event = awaitPointerEvent()
                                     if (event.type == PointerEventType.Release) {
-                                        if (abs(offset.x) > (displayPicture.width * scale - displayPicture.width) / 2) {
-                                            val sign = if (offset.x > 0) 1 else -1
-                                            offset = Offset(
-                                                (displayPicture.width * scale - displayPicture.width) / 2 * sign,
-                                                offset.y
-                                            )
+
+                                        if (abs(offset.targetValue.x) > (displayPicture.width * scale.targetValue - displayPicture.width) / 2) {
+                                            coroutineScope.launch {
+                                                val sign =
+                                                    if (offset.targetValue.x > 0) 1 else -1
+                                                offset.animateTo(
+                                                    Offset(
+                                                        (displayPicture.width * scale.targetValue - displayPicture.width) / 2 * sign,
+                                                        offset.targetValue.y
+                                                    ),
+                                                    animationSpec = tween()
+                                                )
+                                            }
                                         }
 
-                                        if (abs(offset.y) > (displayPicture.height * scale - size.height) / 2) {
-                                            val sign = if (offset.y > 0) 1 else -1
-                                            offset = Offset(
-                                                offset.x,
-                                                (max(
-                                                    displayPicture.height * scale - size.height,
-                                                    0f
-                                                )) / 2 * sign
-                                            )
+
+                                        if (abs(offset.targetValue.y) > (displayPicture.height * scale.targetValue - size.height) / 2) {
+                                            coroutineScope.launch {
+                                                val sign =
+                                                    if (offset.targetValue.y > 0) 1 else -1
+                                                offset.animateTo(
+                                                    Offset(
+                                                        offset.targetValue.x,
+                                                        (max(
+                                                            displayPicture.height * scale.targetValue - size.height,
+                                                            0f
+                                                        )) / 2 * sign
+                                                    ),
+                                                    animationSpec = tween()
+                                                )
+                                            }
                                         }
 
-                                        if (scale < 1f) {
-                                            scale = 1f
-                                            offset = Offset.Zero
+
+
+                                        if (scale.targetValue < 1f) {
+                                            coroutineScope.launch {
+                                                launch {
+                                                    scale.animateTo(
+                                                        1f,
+                                                        animationSpec = tween()
+                                                    )
+                                                }
+                                                launch {
+                                                    offset.animateTo(
+                                                        Offset.Zero,
+                                                        animationSpec = tween()
+                                                    )
+                                                }
+                                            }
                                         }
+
                                     }
                                 }
                             }
